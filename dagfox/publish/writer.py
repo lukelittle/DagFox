@@ -117,6 +117,17 @@ class PublishedWriter:
             self._bind_approval(conn, approval_id)
             return self._upsert(conn, final_rows, approval_id)
 
+    def preview(self, batch_id: str, changes: Sequence[ProposedChange]) -> dict:
+        """Dry run: what publish_batch would do, without writing anything."""
+        final_rows = apply_diff(fetch_batch(self.engine, batch_id), changes)
+        current = published_snapshot(self.engine)
+        inserted = sum(1 for r in final_rows if r["lei"] not in current)
+        updated = sum(
+            1 for r in final_rows
+            if r["lei"] in current and any(current[r["lei"]][f] != r.get(f) for f in ENTITY_FIELDS)
+        )
+        return {"inserted": inserted, "updated": updated, "unchanged": len(final_rows) - inserted - updated}
+
     @staticmethod
     def _bind_approval(conn: Connection, approval_id: str) -> None:
         if conn.dialect.name == "postgresql":

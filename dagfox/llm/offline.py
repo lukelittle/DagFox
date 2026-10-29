@@ -61,7 +61,7 @@ def explain_rules(messages: list[ModelMessage], info: AgentInfo) -> ModelRespons
         f"If published as-is, downstream users would see incorrect reference data for these entities. "
         f"{next_step}"
     )
-    return _respond(info, {"headline": f"{ctx['band']}: {ctx['affected_records']} entity records need attention",
+    return _respond(info, {"headline": f"{ctx['affected_records']} entity records need attention",
                            "summary": summary})
 
 

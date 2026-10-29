@@ -63,6 +63,7 @@ class AuditLog:
         task_id: str | None = None,
         band: str | None = None,
         agent_input: Any = None,
+        input_hash: tuple[str, str] | None = None,
         model_provider: str | None = None,
         model_name: str | None = None,
         model_version: str | None = None,
@@ -72,7 +73,9 @@ class AuditLog:
         approver: str | None = None,
         final_action: str | None = None,
     ) -> str:
-        input_sha256, input_excerpt = summarize_input(agent_input) if agent_input is not None else (None, None)
+        if input_hash is None and agent_input is not None:
+            input_hash = summarize_input(agent_input)
+        input_sha256, input_excerpt = input_hash or (None, None)
         row = dict(
             event_id=str(uuid.uuid4()),
             event_time=_time_str(datetime.now(UTC)),

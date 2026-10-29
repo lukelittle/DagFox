@@ -27,7 +27,7 @@ run: ## Trigger entities_daily. FAULT=none|late_file|bad_records|mass_change
 		--run-id "manual__$(FAULT)__$$(date +%Y%m%dT%H%M%S)" --conf '{"fault": "$(FAULT)"}'
 
 audit: ## Show who decided what, newest last
-	$(PSQL) -c "SELECT to_char(event_time,'HH24:MI:SS') AS time, split_part(dag_run_id,'__',2) AS run, \
+	@$(PSQL) -c "SELECT to_char(event_time,'HH24:MI:SS') AS time, split_part(dag_run_id,'__',2) AS run, \
 		event_type, actor, band, human_decision, approver, final_action FROM dagfox.v_decisions;"
 
 audit-verify: ## Verify the audit log hash chain

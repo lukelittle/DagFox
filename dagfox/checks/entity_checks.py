@@ -18,9 +18,11 @@ from dagfox.checks.reference import ELF_CODE_PATTERN, country_is_valid, lei_is_v
 TRACKED_FIELDS = [
     "legal_name",
     "legal_form_code",
+    "legal_address_city",
     "legal_address_country",
     "hq_address_country",
     "entity_status",
+    "registration_status",
 ]
 MAX_EVIDENCE = 200
 

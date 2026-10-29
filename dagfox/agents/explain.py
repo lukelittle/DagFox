@@ -35,7 +35,7 @@ def fallback_explanation(report: CheckReport, decision: PolicyDecision) -> Expla
     """Deterministic text used when the explain agent fails, so the analyst still gets a message."""
     checks = ", ".join(f"{r.name} ({r.affected_count})" for r in report.failed) or "none"
     return Explanation(
-        headline=f"{decision.band}: {len(report.affected_leis)} entity records need attention",
+        headline=f"{len(report.affected_leis)} entity records need attention",
         summary=(
             f"Data quality checks failed on batch {report.batch_id}. "
             f"Failed checks: {checks}. "
