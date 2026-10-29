@@ -1,0 +1,56 @@
+# DagFox band policy. The LLM *recommends* a band; this file has the final say.
+#
+# Bands, least to most human involvement:
+#   AUTO        agent acts on its own (only actions listed under allowed_actions.AUTO)
+#   SUPERVISED  agent proposes a dry-run diff; a human approves it in Airflow before anything is written
+#   HUMAN_LED   agent only gathers context and writes a summary; no proposed write
+#
+# Rules only ever make a decision stricter. The LLM can escalate a band, never lower it.
+version: 1
+
+thresholds:
+  human_led_affected_pct: 5.0      # more than this share of records affected -> HUMAN_LED
+  min_triage_confidence: 0.70      # below this, escalate one band
+  max_supervised_changes: 200      # a larger diff is too big to review -> HUMAN_LED
+
+# Minimum band when a check fails. Unknown checks fall back to default_check_band.
+check_bands:
+  required_fields: SUPERVISED
+  duplicate_lei: SUPERVISED
+  country_format: SUPERVISED
+  legal_form_format: SUPERVISED
+  unsourced_change: SUPERVISED
+  lei_format: HUMAN_LED             # an invalid identifier has no safe automatic fix
+  row_count: HUMAN_LED              # missing records: upstream problem, needs a person
+default_check_band: HUMAN_LED
+
+late_file:
+  band: AUTO
+  max_wait_minutes: 30              # after this the sensor times out and the run escalates
+  escalate_to: HUMAN_LED
+
+allowed_actions:
+  AUTO: [wait_and_retry, notify]
+  SUPERVISED: [propose_diff, request_approval, notify]
+  HUMAN_LED: [summarize, notify]
+
+remediation:
+  # Every proposed change must cite one of these sources (prefix match).
+  allowed_sources:
+    - "published.entities"
+    - "ISO 3166-1"
+    - "duplicate removal"
+  correctable_fields:
+    - legal_address_country
+    - hq_address_country
+    - legal_form_code
+    - entity_status
+
+approvals:
+  approvers: [data_steward]         # Airflow users allowed to answer approval requests
+  response_timeout_hours: 24
+
+publish:
+  # A batch that passes every check is published under a recorded policy
+  # approval. Set true to require a human approval for every publish.
+  require_hitl_for_clean_loads: false
