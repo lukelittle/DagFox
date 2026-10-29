@@ -1,0 +1,140 @@
+# DagFox local stack: Airflow 3.3.2 (LocalExecutor) + Postgres 16.
+# Adapted from Airflow's reference docker-compose; Celery/Redis removed to stay laptop-sized.
+#
+# Two users exist in the Airflow UI (SimpleAuthManager):
+#   ops_analyst   - runs and watches pipelines
+#   data_steward  - the only user allowed to answer DagFox approval requests
+
+x-airflow-common: &airflow-common
+  build: .
+  image: dagfox-airflow:0.1.0
+  env_file: [.env]
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.api_fastapi.auth.managers.simple.simple_auth_manager.SimpleAuthManager
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: ops_analyst:admin,data_steward:admin
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/config/simple_auth_manager_passwords.json.generated
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    AIRFLOW__API__BASE_URL: http://localhost:8080
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET:-dagfox_local_jwt_secret}
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL: "15"
+    # DagFox reads its database from this Airflow Connection (Secrets Manager on MWAA later).
+    AIRFLOW_CONN_DAGFOX_DB: postgresql://dagfox:${DAGFOX_DB_PASSWORD:-dagfox}@postgres:5432/dagfox
+    DAGFOX_LANDING_DIR: /opt/dagfox/landing
+    DAGFOX_SAMPLE_PATH: /opt/dagfox/data/cache/gleif_sample.csv
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./config:/opt/airflow/config
+    - ./dagfox:/opt/dagfox/dagfox
+    - ./data:/opt/dagfox/data
+    - ./tests:/opt/dagfox/tests
+    - ./pyproject.toml:/opt/dagfox/pyproject.toml
+    - ./landing:/opt/dagfox/landing
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on: &airflow-common-depends-on
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+      DAGFOX_DB_PASSWORD: ${DAGFOX_DB_PASSWORD:-dagfox}
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/10-dagfox.sh:ro
+    ports:
+      - "5433:5432"   # host access for `make audit` / your SQL client
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 10
+    restart: always
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    user: "0:0"
+    command:
+      - -c
+      - |
+        set -e
+        mkdir -p /opt/airflow/{logs,dags,config} /opt/dagfox/landing /opt/dagfox/data/cache
+        printf '{"ops_analyst": "%s", "data_steward": "%s"}' "$${DAGFOX_UI_PASSWORD:-dagfox}" "$${DAGFOX_UI_PASSWORD:-dagfox}" \
+          > /opt/airflow/config/simple_auth_manager_passwords.json.generated
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/{logs,dags,config} /opt/dagfox/landing /opt/dagfox/data/cache
+        /entrypoint airflow version
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: "true"
+
+  # Loads the GLEIF sample (downloading it on first run) into staging/published.
+  dagfox-seed:
+    <<: *airflow-common
+    command: ["python", "/opt/dagfox/data/load_gleif.py", "ensure"]
+    entrypoint: []
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-apiserver:
+    <<: *airflow-common
+    command: api-server
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      dagfox-seed:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  # No triggerer: on Airflow 3.3 HITL tasks wait in the scheduler-managed
+  # `awaiting_input` state, and our file sensor uses reschedule mode.
+
+volumes:
+  postgres-db-volume:
