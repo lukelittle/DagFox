@@ -151,7 +151,7 @@ def entities_daily():
     def publish_fix() -> dict:
         context = get_current_context()
         proposal = context["ti"].xcom_pull(task_ids="propose_fix", key="proposal")
-        approval = context["ti"].xcom_pull(task_ids="approve_fix")
+        approval = context["ti"].xcom_pull(task_ids="approve_fix", key="approval")
         pipeline = build_pipeline()
         result = pipeline.publish(run_context(context), proposal["batch_id"], proposal["changes"],
                                   approval["approval_id"])

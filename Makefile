@@ -7,7 +7,7 @@ help: ## Show targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-10s %s\n", $$1, $$2}'
 
 .env:
-	cp .env.example .env
+	sed "s/^AIRFLOW_UID=.*/AIRFLOW_UID=$$(id -u)/" .env.example > .env
 
 up: .env ## Build and start Airflow + Postgres, seed GLEIF data (one command)
 	mkdir -p logs landing data/cache

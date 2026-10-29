@@ -335,8 +335,10 @@ class EntityPipeline:
                              f"`dagfox.proposed_fixes`, fix_id `{p['fix_id']}`).")
         lines += [
             "",
-            f"Fix `{p['fix_id']}` · approval covers SHA-256 `{p['subject_sha256'][:16]}…` of this batch + diff.",
-            "**Reject** leaves published data untouched.",
+            f"Fix `{p['fix_id']}` · your approval covers SHA-256 `{p['subject_sha256'][:16]}…` "
+            "of exactly this batch and diff.",
+            "",
+            "**Approve** publishes the corrected batch. **Reject** leaves published data untouched.",
         ]
         return "\n".join(lines)
 

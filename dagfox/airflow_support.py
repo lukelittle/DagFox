@@ -45,10 +45,12 @@ class FixApprovalOperator(ApprovalOperator):
     """
 
     def __init__(self, *, proposal_task_id: str, **kwargs):
-        kwargs.setdefault("params", {
-            "comment": Param("", type="string", title="Comment (optional)", source="task",
+        # Assigned outright: Airflow pre-fills kwargs["params"] with the DAG's params,
+        # which HITLOperator filters out of the approval form anyway.
+        kwargs["params"] = {
+            "comment": Param(None, type=["null", "string"], title="Comment (optional)", source="task",
                              description="Recorded in the DagFox audit log with your decision."),
-        })
+        }
         super().__init__(**kwargs)
         self.proposal_task_id = proposal_task_id
 
@@ -56,17 +58,22 @@ class FixApprovalOperator(ApprovalOperator):
         return context["ti"].xcom_pull(task_ids=self.proposal_task_id, key="proposal")
 
     def execute_complete(self, context, event: dict[str, Any]) -> Any:
-        if event.get("error_type") == "timeout":  # no response in time: record it, then fail as usual
-            build_pipeline().record_human_decision(
-                run_context(context), self._proposal(context), "timed_out", "system:timeout",
-                "No response within the approval window",
-            )
-        result = super().execute_complete(context=context, event=event)  # skips downstream on Reject
-        user = result.get("responded_by_user") or {}
+        # Record first: on Reject, ApprovalOperator skips downstream by raising, so nothing
+        # after super().execute_complete() would run.
+        pipeline, ctx, proposal = build_pipeline(), run_context(context), self._proposal(context)
+        if "error" in event:
+            if event.get("error_type") == "timeout":
+                pipeline.record_human_decision(ctx, proposal, "timed_out", "system:timeout",
+                                               "No response within the approval window")
+            return super().execute_complete(context=context, event=event)  # raises
+
+        self.validate_chosen_options(event["chosen_options"])
+        chosen = event["chosen_options"][0]
+        user = event.get("responded_by_user") or {}
         approver = user.get("name") or user.get("id") or "unknown"
-        comment = (result.get("params_input") or {}).get("comment") or None
-        approval_id = build_pipeline().record_human_decision(
-            run_context(context), self._proposal(context), result["chosen_options"][0], approver, comment,
-        )
-        self.log.info("Recorded %s by %s as approval %s", result["chosen_options"][0], approver, approval_id)
-        return {"chosen": result["chosen_options"][0], "approver": approver, "approval_id": approval_id}
+        comment = (event.get("params_input") or {}).get("comment") or None
+        approval_id = pipeline.record_human_decision(ctx, proposal, chosen, approver, comment)
+        self.log.info("Recorded %s by %s as approval %s", chosen, approver, approval_id)
+        context["ti"].xcom_push(key="approval", value={"chosen": chosen, "approver": approver,
+                                                        "approval_id": approval_id})
+        return super().execute_complete(context=context, event=event)
